@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Email Verifier</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'Segoe UI',sans-serif;background:#f0f2f5;min-height:100vh;padding:30px 16px}
+    h1{text-align:center;font-size:22px;color:#1a1a2e;margin-bottom:6px}
+    .sub{text-align:center;font-size:13px;color:#666;margin-bottom:24px}
+    #drop-zone{
+      border:2px dashed #c0c4d0;border-radius:14px;padding:40px 20px;
+      max-width:560px;margin:0 auto 28px;background:#fff;
+      cursor:pointer;text-align:center;transition:border-color .2s,background .2s
+    }
+    #drop-zone.hover{border-color:#6366f1;background:#f5f3ff}
+    #drop-zone .icon{font-size:36px;margin-bottom:10px}
+    #drop-zone p{color:#555;font-size:14px}
+    #drop-zone span{color:#6366f1;font-weight:600}
+    #status-bar{max-width:560px;margin:0 auto 14px;text-align:center;font-size:13px;color:#888}
+    #status-bar.ok{color:#22c55e;font-weight:600}
+    #status-bar.err{color:#ef4444;font-weight:600}
+    #jobs{max-width:560px;margin:0 auto}
+    .job-block{
+      background:#fff;border-radius:14px;padding:18px 20px;
+      margin-bottom:16px;box-shadow:0 1px 4px rgba(0,0,0,.08);position:relative
+    }
+    .job-title{font-weight:600;font-size:14px;color:#1a1a2e;margin-bottom:10px;padding-right:24px}
+    .progress-container{background:#e8eaf0;border-radius:99px;height:10px;overflow:hidden;margin-bottom:8px}
+    .progress-bar{height:10px;background:linear-gradient(90deg,#6366f1,#8b5cf6);border-radius:99px;width:0%;transition:width .3s}
+    .prog-text{font-size:12px;color:#666;margin-bottom:6px}
+    .log-line{font-size:12px;color:#888;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:10px;min-height:16px}
+    .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+    .btn{padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;border:none;text-decoration:none;display:inline-block}
+    .btn-cancel{background:#fee2e2;color:#b91c1c}
+    .btn-all{background:#e0e7ff;color:#3730a3}
+    .btn-valid{background:#dcfce7;color:#15803d}
+    .btn-risky{background:#fef9c3;color:#92400e}
+    .btn-invalid{background:#fee2e2;color:#b91c1c}
+    .close-job{position:absolute;top:12px;right:14px;cursor:pointer;color:#aaa;font-size:16px;line-height:1}
+    .close-job:hover{color:#555}
+    .badge{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:700;margin-right:4px}
+    .b-valid{background:#dcfce7;color:#15803d}
+    .b-risky{background:#fef9c3;color:#92400e}
+    .b-invalid{background:#fee2e2;color:#b91c1c}
+    .counts{margin-bottom:8px}
+  </style>
+</head>
+<body>
+  <h1>Email Verifier</h1>
+  <p class="sub">SMTP-based verification — upload a CSV with an Email column</p>
+  <div id="status-bar">Checking server...</div>
+  <div id="drop-zone">
+    <div class="icon">📂</div>
+    <p><span>Click to upload</span> or drag &amp; drop CSV</p>
+    <p style="font-size:12px;color:#aaa;margin-top:6px">Email column auto-detected</p>
+  </div>
+  <input type="file" id="file-input" accept=".csv" style="display:none">
+  <div id="jobs"></div>
+
+<script>
+const API = 'https://email-verifier-nb.onrender.com';
+const dz  = document.getElementById('drop-zone');
+const fi  = document.getElementById('file-input');
+const sb  = document.getElementById('status-bar');
+
+// Server check
+fetch(API+'/ping').then(r=>r.json()).then(()=>{sb.textContent='Server Ready';sb.className='ok'})
+  .catch(()=>{sb.textContent='Server offline — first request may take 30s';sb.className='err'});
+
+// Drag/drop/click
+dz.addEventListener('click',()=>fi.click());
+dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('hover')});
+dz.addEventListener('dragleave',()=>dz.classList.remove('hover'));
+dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('hover');handleFile(e.dataTransfer.files[0])});
+fi.addEventListener('change',()=>handleFile(fi.files[0]));
+
+// Restore past jobs
+let jobList = JSON.parse(localStorage.getItem('nb-jobs')||'[]');
+jobList.forEach(j=>createJobBlock(j.job_id, j.fileName));
+
+function handleFile(file){
+  if(!file) return;
+  const fd = new FormData(); fd.append('file', file);
+  sb.textContent='Uploading...'; sb.className='';
+  fetch(API+'/verify',{method:'POST',body:fd})
+    .then(r=>r.json())
+    .then(({job_id})=>{
+      jobList.push({job_id, fileName:file.name});
+      localStorage.setItem('nb-jobs', JSON.stringify(jobList));
+      createJobBlock(job_id, file.name);
+      sb.textContent='Server Ready'; sb.className='ok';
+    })
+    .catch(()=>{sb.textContent='Upload failed — server may be waking up, retry in 30s';sb.className='err'});
+}
+
+function createJobBlock(job_id, fileName){
+  const block = document.createElement('div');
+  block.id = 'job-'+job_id;
+  block.className = 'job-block';
+  block.innerHTML = `
+    <span class="close-job" title="Remove">✕</span>
+    <div class="job-title">📄 ${fileName}</div>
+    <div class="counts" id="counts-${job_id}"></div>
+    <div class="progress-container"><div class="progress-bar" id="bar-${job_id}"></div></div>
+    <div class="prog-text" id="prog-${job_id}">Starting...</div>
+    <div class="log-line" id="log-${job_id}"></div>
+    <div class="actions" id="act-${job_id}">
+      <button class="btn btn-cancel" id="cancel-${job_id}">Cancel</button>
+    </div>`;
+  document.getElementById('jobs').prepend(block);
+
+  block.querySelector('.close-job').onclick = ()=>{
+    fetch(API+'/cancel?job_id='+job_id,{method:'POST'});
+    block.remove();
+    jobList = jobList.filter(j=>j.job_id!==job_id);
+    localStorage.setItem('nb-jobs',JSON.stringify(jobList));
+  };
+
+  let canceled = false;
+  document.getElementById('cancel-'+job_id).onclick = ()=>{
+    canceled = true;
+    fetch(API+'/cancel?job_id='+job_id,{method:'POST'});
+    document.getElementById('prog-'+job_id).textContent = 'Canceled';
+    document.getElementById('act-'+job_id).innerHTML = '';
+  };
+
+  const poll = setInterval(()=>{
+    if(canceled) return clearInterval(poll);
+    fetch(API+'/progress?job_id='+job_id).then(r=>r.json()).then(d=>{
+      document.getElementById('bar-'+job_id).style.width = d.percent+'%';
+      document.getElementById('prog-'+job_id).textContent =
+        d.percent+'% — row '+d.row+' / '+d.total;
+    }).catch(()=>{});
+    fetch(API+'/log?job_id='+job_id).then(r=>r.text()).then(t=>{
+      document.getElementById('log-'+job_id).textContent = t;
+    }).catch(()=>{});
+  }, 1000);
+
+  const waitDone = setInterval(()=>{
+    if(canceled) return clearInterval(waitDone);
+    fetch(API+'/progress?job_id='+job_id).then(r=>r.json()).then(d=>{
+      if(d.done || d.percent>=100){
+        clearInterval(poll);
+        clearInterval(waitDone);
+        document.getElementById('bar-'+job_id).style.width='100%';
+        document.getElementById('prog-'+job_id).textContent='Done!';
+        document.getElementById('act-'+job_id).innerHTML=`
+          <a class="btn btn-all"     href="${API}/download?job_id=${job_id}&type=all"          target="_blank">All CSV</a>
+          <a class="btn btn-valid"   href="${API}/download?job_id=${job_id}&type=valid"        target="_blank">Valid Only</a>
+          <a class="btn btn-risky"   href="${API}/download?job_id=${job_id}&type=risky"        target="_blank">Risky</a>
+          <a class="btn btn-invalid" href="${API}/download?job_id=${job_id}&type=risky_invalid" target="_blank">Invalid</a>`;
+      }
+    }).catch(()=>{});
+  }, 1500);
+}
+</script>
+</body>
+</html>
